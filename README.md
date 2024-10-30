@@ -10,6 +10,8 @@
 
 **Step 4:** Install ConceptGraph according to [here](https://github.com/concept-graphs/concept-graphs)
 
+**Step 5:** Install Grounded-SAM according to [here](https://github.com/IDEA-Research/Grounded-Segment-Anything)
+
 ## Installation of ModelServer
 
 **Step 1:** Install ModelServer in a new conda environment according to [here](https://github.com/bagh2178/ModelServer) 
