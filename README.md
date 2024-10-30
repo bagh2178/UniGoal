@@ -12,6 +12,8 @@
 
 **Step 5:** Install Grounded-SAM according to [here](https://github.com/IDEA-Research/Grounded-Segment-Anything)
 
+**Step 6:** Change the ``sys.path.append(xxx)`` in ``./main.py`` and ``./scenegraph/scenegraph.py`` to your workspace path
+
 ## Installation of ModelServer
 
 **Step 1:** Install ModelServer in a new conda environment according to [here](https://github.com/bagh2178/ModelServer)
