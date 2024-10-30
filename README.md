@@ -14,8 +14,10 @@
 
 ## Installation of ModelServer
 
-**Step 1:** Install ModelServer in a new conda environment according to [here](https://github.com/bagh2178/ModelServer) 
+**Step 1:** Install ModelServer in a new conda environment according to [here](https://github.com/bagh2178/ModelServer)
 
 ## Evaluation of UniGoal
 
-**Step 1:** Run UniGoal on a single GPU ``CUDA_VISIBLE_DEVICES=0 python main.py``
+**Step 1:** Start ModelServer according to [here](https://github.com/bagh2178/ModelServer)
+
+**Step 2:** Run UniGoal on a single GPU ``CUDA_VISIBLE_DEVICES=0 python main.py``
