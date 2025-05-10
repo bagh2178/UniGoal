@@ -131,7 +131,7 @@ def main():
             if len(episode_success) == args.num_episodes:
                 finished = True
             if args.visualize:
-                video_path = os.path.join(args.visualization_dir, 'videos', 'eps_{:0>6}_{}.mp4'.format(infos['episode_no'], int(success)))
+                video_path = os.path.join(args.visualization_dir, 'videos', 'eps_{:0>6}.mp4'.format(infos['episode_no']))
                 agent.save_visualization(video_path)
             wait_env = True
             BEV_map.update_intrinsic_rew()

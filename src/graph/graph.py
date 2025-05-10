@@ -841,9 +841,9 @@ Please provide the relationship you can determine from the image.
     def get_goal(self, goal=None):
         fbe_map = torch.zeros_like(self.full_map[0,0])
         if self.full_map.shape[1] == 1:
-            fbe_map[self.fbe_free_map[0,0]>0] = 1 # first free 
+            fbe_map[self.fbe_free_map[0,0]>0] = 1
         else:
-            fbe_map[self.full_map[0,1]>0] = 1 # first free 
+            fbe_map[self.full_map[0,1]>0] = 1
         fbe_map[skimage.morphology.binary_dilation(self.full_map[0,0].cpu().numpy(), skimage.morphology.disk(4))] = 3 # then dialte obstacle
 
         fbe_cp = copy.deepcopy(fbe_map)
@@ -856,13 +856,11 @@ Please provide the relationship you can determine from the image.
         diff = fbe_map - fbe_cpp # intersection between unknown area and free area 
         frontier_map = diff == 1
         frontier_map = frontier_map & (self.num_of_goal < 3).to(frontier_map.device)
-        # frontier_map = self.frontier_map
         frontier_locations = torch.stack([torch.where(frontier_map)[0], torch.where(frontier_map)[1]]).T
         num_frontiers = len(torch.where(frontier_map)[0])
         if num_frontiers == 0:
             return None
         
-        # for each frontier, calculate the inverse of distance
         input_pose = np.zeros(7)
         input_pose[:3] = self.full_pose.cpu().numpy()
         input_pose[1] = self.map_size_cm/100 - input_pose[1]
@@ -878,7 +876,6 @@ Please provide the relationship you can determine from the image.
         frontier_locations = frontier_locations.cpu().numpy()
         distances = fmm_dist[frontier_locations[:,0],frontier_locations[:,1]] / 20
         
-        ## use the threshold of 1.6 to filter close frontiers to encourage exploration
         distance_threshold = 3
         idx_16 = np.where(distances>=distance_threshold)
         distances_16 = distances[idx_16]
@@ -899,21 +896,12 @@ Please provide the relationship you can determine from the image.
             state = [goal[0] + 1, goal[1] + 1]
             planner.set_goal(state)
             fmm_dist = planner.fmm_dist[::-1]
-            frontier_locations += 1
-            frontier_locations = frontier_locations.cpu().numpy()
             distances = fmm_dist[frontier_locations[:,0],frontier_locations[:,1]] / 20
             
-            ## use the threshold of 1.6 to filter close frontiers to encourage exploration
-            distance_threshold = 3
-            idx_16 = np.where(distances>=distance_threshold)
             distances_16 = distances[idx_16]
             distances_16_inverse = 1 - (np.clip(distances_16, 0, 10 + distance_threshold) - distance_threshold) / 10
-            frontier_locations_16 = frontier_locations[idx_16]
-            self.frontier_locations = frontier_locations
-            self.frontier_locations_16 = frontier_locations_16
             if len(distances_16) == 0:
                 return None
-            num_16_frontiers = len(idx_16[0])
             scores += distances_16_inverse
 
         idx_16_max = idx_16[0][np.argmax(scores)]

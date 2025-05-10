@@ -5,7 +5,7 @@ scikit-image
 scikit-fmm
 scikit-learn
 pslpython
-ollama
+openai
 grakel
 open3d
 supervision==0.21.0

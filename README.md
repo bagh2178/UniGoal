@@ -29,15 +29,13 @@ Method Pipeline:
 
 ## Installation
 
-**Step 1 (Code)**
+**Step 1 (Environment)**
 
 Clone UniGoal.
 ```
 git clone https://github.com/bagh2178/UniGoal.git
 cd UniGoal
 ```
-
-**Step 2 (Environment)**
 
 Create environment.
 ```
@@ -55,12 +53,14 @@ Install third party packages.
 ```
 pip install git+https://github.com/cvg/LightGlue.git
 pip install git+https://github.com/facebookresearch/detectron2.git
+pip install git+https://github.com/facebookresearch/pytorch3d.git
 git clone https://github.com/IDEA-Research/Grounded-Segment-Anything.git third_party/Grounded-Segment-Anything
 cd third_party/Grounded-Segment-Anything
 git checkout 5cb813f
 pip install -e segment_anything
 pip install --no-build-isolation -e GroundingDINO
 cd ../../
+mkdir -p data/models/
 wget -O data/models/sam_vit_h_4b8939.pth https://dl.fbaipublicfiles.com/segment_anything/sam_vit_h_4b8939.pth
 wget -O data/models/groundingdino_swint_ogc.pth https://github.com/IDEA-Research/GroundingDINO/releases/download/v0.1.0-alpha/groundingdino_swint_ogc.pth
 ```
@@ -71,7 +71,7 @@ conda install pytorch::faiss-gpu
 pip install -r requirements.txt
 ```
 
-**Step 3 (Dataset)**
+**Step 2 (Dataset)**
 
 Download HM3D scene dataset from [here](https://api.matterport.com/resources/habitat/hm3d-val-habitat-v0.2.tar) and instance-image-goal navigation episodes dataset from [here](https://dl.fbaipublicfiles.com/habitat/data/datasets/imagenav/hm3d/v3/instance_imagenav_hm3d_v3.zip).
 
@@ -101,7 +101,7 @@ UniGoal/
                 └── 00899-58NLZxWBSpk/
 ```
 
-**Step 4 (LLM and VLM)**
+**Step 3 (LLM and VLM)**
 
 Option 1: Install Ollama.
 ```
