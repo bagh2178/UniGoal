@@ -17,6 +17,7 @@ frame_width: 120
 frame_height: 160
 max_episode_length: 1000
 task_config: "tasks/instance_imagenav.yaml"
+text_goal_dataset: "data/datasets/textnav/val/val_text.json.gz"
 split: "val"
 camera_height: 0.88
 hfov: 79

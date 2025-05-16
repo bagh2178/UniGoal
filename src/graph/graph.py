@@ -32,6 +32,7 @@ from ..utils.fmm.fmm_planner import FMMPlanner
 from ..utils.fmm import pose_utils as pu
 from ..utils.camera import get_camera_matrix
 from ..utils.map import remove_small_frontiers
+from ..utils.llm import LLM, VLM
 
 sys.path.append('third_party/Grounded-Segment-Anything/')
 from grounded_sam_demo import load_model, get_grounding_output
@@ -173,6 +174,7 @@ class SubGraph():
 
 class Graph():
     def __init__(self, args, is_navigation=True) -> None:
+        self.args = args
         self.map_resolution = args.map_resolution
         self.map_size_cm = args.map_size_cm
         self.map_size = args.map_size
@@ -192,10 +194,6 @@ class Graph():
         self.group_nodes = []
         self.init_room_nodes()
         self.is_navigation = is_navigation
-        self.llm_name = 'llama3.2-vision'
-        self.vlm_name = 'llama3.2-vision'
-        self.api_key = 'ollama'
-        self.base_url = 'http://localhost:11434/v1/'
         self.set_cfg()
         
         self.groundingdino_config_file = 'third_party/Grounded-Segment-Anything/GroundingDINO/groundingdino/config/GroundingDINO_SwinT_OGC.py'
@@ -247,8 +245,10 @@ Example output format if no relation:
 Please provide the relationship you can determine from the image.
         """
         self.grounded_sam = self.get_grounded_sam(self.device)
-        self.graphbuilder = GraphBuilder(self.get_llm_response)
-        self.goalgraphdecomposer = GoalGraphDecomposer(self.get_llm_response)
+        self.llm = LLM(self.args.base_url, self.args.api_key, self.args.llm_model)
+        self.vlm = VLM(self.args.base_url, self.args.api_key, self.args.vlm_model)
+        self.graphbuilder = GraphBuilder(self.llm)
+        self.goalgraphdecomposer = GoalGraphDecomposer(self.llm)
         self.extractor = DISK(max_num_keypoints=2048).eval().to(self.device)
         self.image_matcher = LightGlue(features='disk').eval().to(self.device)
 
@@ -286,10 +286,12 @@ Please provide the relationship you can determine from the image.
         if isinstance(image, np.ndarray):
             image = Image.fromarray(image)
         self.instance_imagegoal = image
-        text_goal = self.get_vlm_response(self.prompt_image2text, self.instance_imagegoal)
+        text_goal = self.vlm(self.prompt_image2text, self.instance_imagegoal)
         self.set_text_goal(text_goal)
 
     def set_text_goal(self, text_goal):
+        if isinstance(text_goal, dict):
+            text_goal = text_goal['intrinsic_attributes'] + ' ' + text_goal['extrinsic_attributes']
         self.text_goal = text_goal
         self.goalgraph = self.graphbuilder.build_graph_from_text(text_goal)
         self.goalgraph_decomposed = self.goalgraphdecomposer.goal_decomposition(self.goalgraph)
@@ -558,7 +560,7 @@ Please provide the relationship you can determine from the image.
         for j, old_node in enumerate(self.nodes):
             image = self.get_joint_image(old_node, new_node)
             if image is not None:
-                response = self.get_vlm_response(self.prompt_create_relation.format(obj1=old_node.caption, obj2=new_node.caption), image)
+                response = self.vlm(self.prompt_create_relation.format(obj1=old_node.caption, obj2=new_node.caption), image)
                 if "No clear spatial relationship" not in response:
                     response = response.lower()
                     objects = [old_node.caption.lower(), new_node.caption.lower()]
@@ -615,7 +617,7 @@ Please provide the relationship you can determine from the image.
                 node_pairs.append(new_edge.node2.caption)
             prompt = self.prompt_edge_proposal + '\n({}, {})' * len(new_edges)
             prompt = prompt.format(*node_pairs)
-            relations = self.get_llm_response(prompt=prompt)
+            relations = self.llm(prompt=prompt)
             relations = relations.split('\n')
             if len(relations) == len(new_edges):
                 for i, relation in enumerate(relations):
@@ -662,7 +664,7 @@ Please provide the relationship you can determine from the image.
         if room_node_text == '':
             return None
         prompt = self.prompt_room_predict.format(goal, room_node_text)
-        response = self.get_llm_response(prompt=prompt)
+        response = self.llm(prompt=prompt)
         response = response.lower()
         predict_room_node = None
         for room_node in self.room_nodes:
@@ -712,7 +714,7 @@ Please provide the relationship you can determine from the image.
     def overlap(self):
         graph1 = self.scenegraph
         graph2 = self.goalgraph
-        self.matcher = GraphMatcher(graph1, graph2, self.get_llm_response)
+        self.matcher = GraphMatcher(graph1, graph2, self.llm)
         overlap_score = self.matcher.overlap()
         return overlap_score
     
@@ -736,7 +738,7 @@ Please provide the relationship you can determine from the image.
         return position
 
     def reasonableness_correction(self):
-        corrector = SceneGraphCorrector(self.get_llm_response)
+        corrector = SceneGraphCorrector(self.llm)
         self.scenegraph = corrector.correct_scene_graph(self.scenegraph, self.obj_goal)
         return None
 
@@ -745,40 +747,6 @@ Please provide the relationship you can determine from the image.
             sys.stdout.write('\033[F')
             sys.stdout.write('\033[J')
             sys.stdout.flush()  
-
-    def get_llm_response(self, prompt):
-        client = OpenAI(api_key=self.api_key, base_url=self.base_url)
-        chat_completion = client.chat.completions.create(
-            messages=[
-                {
-                    'role': 'user',
-                    'content': prompt,
-                }
-            ],
-            model=self.llm_name,
-        )
-        return chat_completion.choices[0].message.content
-    
-    def get_vlm_response(self, prompt, image):
-        buffered = BytesIO()
-        image.save(buffered, format='PNG')
-        image_bytes = base64.b64encode(buffered.getvalue())
-        image_str = str(image_bytes, 'utf-8')
-
-        client = OpenAI(api_key=self.api_key, base_url=self.base_url)
-        chat_completion = client.chat.completions.create(
-            messages=[
-                {
-                    'role': 'user',
-                    'content': [
-                        {"type": "text", "text": prompt},
-                        {"type": "image_url", "image_url": "data:image/png;base64," + image_str}
-                    ]
-                }
-            ],
-            model=self.llm_name,
-        )
-        return chat_completion.choices[0].message.content
     
     def find_modes(self, lst):  
         if len(lst) == 0:
@@ -952,13 +920,13 @@ Please provide the relationship you can determine from the image.
 
     def graph_corr(self, goal, graph):
         prompt = self.prompt_graph_corr_0.format(graph.center_node.caption, goal)
-        response_0 = self.get_llm_response(prompt=prompt)
+        response_0 = self.llm(prompt=prompt)
         prompt = self.prompt_graph_corr_1.format(graph.center_node.caption, goal)
-        response_1 = self.get_llm_response(prompt=prompt)
+        response_1 = self.llm(prompt=prompt)
         prompt = self.prompt_graph_corr_2.format(graph.caption, response_1)
-        response_2 = self.get_llm_response(prompt=prompt)
+        response_2 = self.llm(prompt=prompt)
         prompt = self.prompt_graph_corr_3.format(response_0, response_1 + response_2, graph.center_node.caption, goal)
-        response_3 = self.get_llm_response(prompt=prompt)
+        response_3 = self.llm(prompt=prompt)
         corr_score = self.text2value(response_3)
         return corr_score
     

@@ -2,6 +2,7 @@ import warnings
 warnings.filterwarnings('ignore')
 import math
 import os
+import re
 import cv2
 from PIL import Image
 import skimage.morphology
@@ -19,6 +20,7 @@ from src.utils.visualization.visualization import (
     get_contour_points
 )
 from src.utils.visualization.save import save_video
+from src.utils.llm import LLM
 
 from lightglue import LightGlue, SuperPoint, DISK
 from lightglue.utils import load_image, rbd, match_pair , numpy_image_to_torch
@@ -38,6 +40,7 @@ class UniGoal_Agent():
 
 
         self.sem_pred = SemanticPredMaskRCNN(args)
+        self.llm = LLM(self.args.base_url, self.args.api_key, self.args.llm_model)
 
         self.selem = skimage.morphology.disk(3)
 
@@ -52,6 +55,7 @@ class UniGoal_Agent():
         self.last_action = None
         self.count_forward_actions = None
         self.instance_imagegoal = None
+        self.text_goal = None
 
         self.extractor = DISK(max_num_keypoints=2048).eval().to(self.device)
         self.matcher = LightGlue(features='disk').eval().to(self.device)
@@ -71,6 +75,7 @@ class UniGoal_Agent():
         # define untraversible area of the goal: 0 means area can be goals, 1 means cannot be
         self.goal_map_mask = np.ones((self.global_width, self.global_height))
         self.pred_box = []
+        self.prompt_text2object = '"chair: 0, sofa: 1, plant: 2, bed: 3, toilet: 4, tv_monitor: 5" The above are the labels corresponding to each category. Which object is described in the following text? Only response the number of the label and not include other text.\nText: {text}'
         torch.set_grad_enabled(False)
 
         if args.visualize:
@@ -84,6 +89,7 @@ class UniGoal_Agent():
         obs, info = self.envs.reset()
 
         self.instance_imagegoal = self.envs.instance_imagegoal
+        self.text_goal = self.envs.text_goal
         idx = self.get_goal_cat_id()
         if idx is not None:
             self.envs.set_goal_cat_id(idx)
@@ -234,8 +240,9 @@ class UniGoal_Agent():
             goal_mask = np.zeros_like(goal_mask)
             goal_mask[whwh[1]:whwh[3], whwh[0]:whwh[2]] = 1.
 
-            index = self.local_feature_match_lightglue()
-            match_points = index.shape[0]
+            if self.args.goal_type == 'ins-image':
+                index = self.local_feature_match_lightglue()
+                match_points = index.shape[0]
             planner_inputs['found_goal'] = 0
 
             if self.temp_goal is not None:
@@ -257,7 +264,6 @@ class UniGoal_Agent():
 
                 goal_dis = self.compute_temp_goal_distance(map_pred, goal_map, start, planning_window)
 
-            # goal_dis = 100
             if goal_dis is None:
                 self.temp_goal = None
                 planner_inputs['goal'] = planner_inputs['exp_goal']
@@ -266,8 +272,7 @@ class UniGoal_Agent():
                 self.goal_map_mask[gx1:gx2, gy1:gy2][goal_map > 0] = 0
                 print(f"Rank: {self.envs.rank}, timestep: {self.envs.timestep},  temp goal unavigable !")
             else:
-                if match_points > 100:
-                # if False:
+                if self.args.goal_type == 'ins-image' and match_points > 100:
                     planner_inputs['found_goal'] = 1
                     global_goal = np.zeros((self.global_width, self.global_height))
                     global_goal[gx1:gx2, gy1:gy2] = goal_map
@@ -275,11 +280,8 @@ class UniGoal_Agent():
                     planner_inputs['goal'] = goal_map
                     self.temp_goal = None
                 else:
-                    # if goal_dis < 150:
-                    if goal_dis < 50:
-                        # if match_points > 60:
-                        if match_points > 90:
-                        # if True:
+                    if (self.args.goal_type == 'ins-image' and goal_dis < 50) or (self.args.goal_type == 'text' and goal_dis < 15):
+                        if (self.args.goal_type == 'ins-image' and match_points > 90) or self.args.goal_type == 'text':
                             planner_inputs['found_goal'] = 1
                             global_goal = np.zeros((self.global_width, self.global_height))
                             global_goal[gx1:gx2, gy1:gy2] = goal_map
@@ -315,9 +317,10 @@ class UniGoal_Agent():
                     if goal_dis is not None:
                         planner_inputs['goal'] = new_goal_map
                         if goal_dis < 100:
-                            index = self.local_feature_match_lightglue()
-                            match_points = index.shape[0]
-                            if match_points < 80:
+                            if self.args.goal_type == 'ins-image':
+                                index = self.local_feature_match_lightglue()
+                                match_points = index.shape[0]
+                            if (self.args.goal_type == 'ins-image' and match_points < 80) or self.args.goal_type == 'text':
                                 planner_inputs['goal'] = planner_inputs['exp_goal']
                                 selem = skimage.morphology.disk(3)
                                 new_goal_map = skimage.morphology.dilation(new_goal_map, selem)
@@ -669,20 +672,32 @@ class UniGoal_Agent():
             return semantic_pred, seg_predictions
         
     def get_goal_cat_id(self):
-        instance_whwh, seg_predictions = self.pred_sem(self.instance_imagegoal.astype(np.uint8), None, pred_bbox=True)
-        ins_whwh = [instance_whwh[i] for i in range(len(instance_whwh)) \
-            if (instance_whwh[i][2][3]-instance_whwh[i][2][1])>1/6*self.instance_imagegoal.shape[0] or \
-                (instance_whwh[i][2][2]-instance_whwh[i][2][0])>1/6*self.instance_imagegoal.shape[1]]
-        if ins_whwh != []:
-            ins_whwh = sorted(ins_whwh,  \
-                key=lambda s: ((s[2][0]+s[2][2]-self.instance_imagegoal.shape[1])/2)**2 \
-                    +((s[2][1]+s[2][3]-self.instance_imagegoal.shape[0])/2)**2 \
-                )
-            if ((ins_whwh[0][2][0]+ins_whwh[0][2][2]-self.instance_imagegoal.shape[1])/2)**2 \
-                    +((ins_whwh[0][2][1]+ins_whwh[0][2][3]-self.instance_imagegoal.shape[0])/2)**2 < \
-                        ((self.instance_imagegoal.shape[1] / 6)**2 )*2:
-                return int(ins_whwh[0][0])
-        return None
+        if self.args.goal_type == 'ins-image':
+            instance_whwh, seg_predictions = self.pred_sem(self.instance_imagegoal.astype(np.uint8), None, pred_bbox=True)
+            ins_whwh = [instance_whwh[i] for i in range(len(instance_whwh)) \
+                if (instance_whwh[i][2][3]-instance_whwh[i][2][1])>1/6*self.instance_imagegoal.shape[0] or \
+                    (instance_whwh[i][2][2]-instance_whwh[i][2][0])>1/6*self.instance_imagegoal.shape[1]]
+            if ins_whwh != []:
+                ins_whwh = sorted(ins_whwh,  \
+                    key=lambda s: ((s[2][0]+s[2][2]-self.instance_imagegoal.shape[1])/2)**2 \
+                        +((s[2][1]+s[2][3]-self.instance_imagegoal.shape[0])/2)**2 \
+                    )
+                if ((ins_whwh[0][2][0]+ins_whwh[0][2][2]-self.instance_imagegoal.shape[1])/2)**2 \
+                        +((ins_whwh[0][2][1]+ins_whwh[0][2][3]-self.instance_imagegoal.shape[0])/2)**2 < \
+                            ((self.instance_imagegoal.shape[1] / 6)**2 )*2:
+                    return int(ins_whwh[0][0])
+            return None
+        elif self.args.goal_type == 'text':
+            for i in range(10):
+                text_goal_id = self.llm(self.prompt_text2object.replace('{text}', self.text_goal['intrinsic_attributes']))
+                try:
+                    text_goal_id = re.findall(r'\d+', text_goal_id)[0]
+                    text_goal_id = int(text_goal_id)
+                    if 0 <= text_goal_id < 6:
+                        return text_goal_id
+                except:
+                    pass
+            return 0
 
     def visualize(self, inputs):
         args = self.args
@@ -762,18 +777,18 @@ class UniGoal_Agent():
         if self.args.environment == 'habitat':
             rgb_visualization = cv2.resize(self.rgb_vis, (360, 480), interpolation=cv2.INTER_NEAREST)
 
-        # tmp_goal = cv2.resize(self.instance_imagegoal, (480, 480), interpolation=cv2.INTER_NEAREST)
-        instance_imagegoal = self.instance_imagegoal
-        h, w = instance_imagegoal.shape[0], instance_imagegoal.shape[1]
-        if h > w:
-            instance_imagegoal = instance_imagegoal[h // 2 - w // 2:h // 2 + w // 2, :]
-        elif w > h:
-            instance_imagegoal = instance_imagegoal[:, w // 2 - h // 2:w // 2 + h // 2]
-        tmp_goal = cv2.resize(instance_imagegoal, (215, 215), interpolation=cv2.INTER_NEAREST)
-        tmp_goal = cv2.cvtColor(tmp_goal, cv2.COLOR_RGB2BGR)
         vis_image = self.vis_image_background.copy()
-        if self.args.environment == 'habitat':
-            vis_image[50:265, 25:240] = tmp_goal
+        if self.args.goal_type == 'ins-image' or self.args.goal_type == 'text':
+            instance_imagegoal = self.instance_imagegoal
+            h, w = instance_imagegoal.shape[0], instance_imagegoal.shape[1]
+            if h > w:
+                instance_imagegoal = instance_imagegoal[h // 2 - w // 2:h // 2 + w // 2, :]
+            elif w > h:
+                instance_imagegoal = instance_imagegoal[:, w // 2 - h // 2:w // 2 + h // 2]
+            tmp_goal = cv2.resize(instance_imagegoal, (215, 215), interpolation=cv2.INTER_NEAREST)
+            tmp_goal = cv2.cvtColor(tmp_goal, cv2.COLOR_RGB2BGR)
+            if self.args.environment == 'habitat':
+                vis_image[50:265, 25:240] = tmp_goal
         vis_image[50:530, 650:1130] = sem_map_vis
         if self.args.environment == 'habitat':
             vis_image[50:530, 265:625] = rgb_visualization

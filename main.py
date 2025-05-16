@@ -13,7 +13,7 @@ from src.envs.habitat import construct_envs
 from src.agent.unigoal.agent import UniGoal_Agent
 from src.map.bev_mapping import BEV_Map
 from src.graph.graph import Graph
-
+import gzip
 
 def get_config():
 
@@ -70,6 +70,10 @@ def main():
     finished = False
     wait_env = False
 
+    if args.goal_type == 'text':
+        with gzip.open(args.text_goal_dataset, 'rt') as f:
+            text_goal_dataset = json.load(f)
+
     BEV_map = BEV_Map(args)
     graph = Graph(args)
     envs = construct_envs(args)
@@ -110,7 +114,9 @@ def main():
     graph.set_obj_goal(infos['goal_name'])
     if args.goal_type == 'ins-image':
         graph.set_image_goal(infos['instance_imagegoal'])
-        
+    elif args.goal_type == 'text':
+        graph.set_text_goal(infos['text_goal'])
+
     step = 0
 
     while True:
@@ -131,7 +137,7 @@ def main():
             if len(episode_success) == args.num_episodes:
                 finished = True
             if args.visualize:
-                video_path = os.path.join(args.visualization_dir, 'videos', 'eps_{:0>6}.mp4'.format(infos['episode_no']))
+                video_path = os.path.join(args.visualization_dir, 'videos', 'eps_{:0>6}_{}.mp4'.format(infos['episode_no'], int(success)))
                 agent.save_visualization(video_path)
             wait_env = True
             BEV_map.update_intrinsic_rew()
@@ -141,6 +147,8 @@ def main():
             graph.set_obj_goal(infos['goal_name'])
             if args.goal_type == 'ins-image':
                 graph.set_image_goal(infos['instance_imagegoal'])
+            elif args.goal_type == 'text':
+                graph.set_text_goal(infos['text_goal'])
 
         BEV_map.mapping(rgbd, infos)
 

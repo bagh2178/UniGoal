@@ -45,7 +45,14 @@ def init_vis_image(goal_name, episode_info, args):
     #                         font, fontScale, color, thickness,
     #                         cv2.LINE_AA)
 
-    text = f"Goal Image"
+    if args.goal_type == 'ins-image ':
+        text = f"Goal Image"
+    elif args.goal_type == 'text':
+        text = f"Goal Text"
+    elif args.goal_type == 'object':
+        text = f"Goal Object"
+    else:
+        text = f"Goal"
     textsize = cv2.getTextSize(text, font, fontScale, thickness)[0]
     textX = (215 - textsize[0]) // 2 + 25
     if args.environment == 'habitat':

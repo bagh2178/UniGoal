@@ -11,6 +11,7 @@ import numpy as np
 import json
 from PIL import Image
 import time
+import logging
 
 from configs.categories import name2index
 from src.utils.fmm.pose_utils import get_l2_distance, get_rel_pose_change
@@ -63,6 +64,10 @@ class InstanceImageGoal_Env(habitat.RLEnv):
         self.transform_frames = []
         self.name2index = name2index
         self.index2name = {v: k for k, v in self.name2index.items()}
+        if self.args.goal_type == 'text':
+            with gzip.open(self.args.text_goal_dataset, 'rt') as f:
+                self.text_goal_dataset = json.load(f)
+            self.average_acc = 0
 
     def load_new_episode(self):
         """The function loads a fixed episode from the episode dataset. This
@@ -234,8 +239,12 @@ class InstanceImageGoal_Env(habitat.RLEnv):
         torch.set_grad_enabled(False)
 
         self.info['goal_cat_id'] = self.gt_goal_idx
-        self.info['instance_imagegoal'] = obs['instance_imagegoal']
-        self.instance_imagegoal = obs['instance_imagegoal']
+        if self.args.goal_type == 'ins-image' or self.args.goal_type == 'text':
+            self.info['instance_imagegoal'] = obs['instance_imagegoal']
+            self.instance_imagegoal = obs['instance_imagegoal']
+        if self.args.goal_type == 'text':
+            self.info['text_goal'] = self.text_goal_dataset['attribute_data'][self.habitat_env.current_episode.goal_key]
+            self.text_goal = self.info['text_goal']
 
         print(f"rank:{self.rank}, episode:{self.episode_no}, cat_id:{self.gt_goal_idx}, cat_name:{self.goal_name}")
         torch.set_grad_enabled(True)
